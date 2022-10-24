@@ -70,6 +70,12 @@ impl Transaction {
             avs.push(action_view);
         }
 
+        // Unpack the string for MemoPlaintext if we have one
+        let memo_plaintext_s: Option<String> = match memo_plaintext {
+            Some(p) => Some(p.0),
+            None => None,
+        };
+
         TransactionView {
             tx: self.clone(),
             actions: avs,
@@ -77,8 +83,7 @@ impl Transaction {
             chain_id: self.transaction_body().chain_id,
             fee: self.transaction_body().fee,
             fmd_clues: self.transaction_body().fmd_clues,
-            //TODO: this MemoPlaintext -> String conversion is a bit eklig & should be fixed up when we get rid of MemoPlaintext entirely
-            memo: memo_plaintext.map(|x| String::from_utf8(x.0.to_vec()).unwrap()),
+            memo: memo_plaintext_s,
         }
     }
 

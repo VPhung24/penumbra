@@ -21,17 +21,17 @@ pub const MEMO_LEN_BYTES: usize = 512;
 // The memo is stored separately from the `Note`.
 // TODO: MemoPlaintext should just be a fixed-length string, drop this type entirely
 #[derive(Clone, PartialEq, Eq)]
-pub struct MemoPlaintext(pub [u8; MEMO_LEN_BYTES]);
+pub struct MemoPlaintext(pub String);
 
 impl Debug for MemoPlaintext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "MemoPlaintext({})", hex::encode(self.0))
+        write!(f, "MemoPlaintext({})", hex::encode(&self.0))
     }
 }
 
 impl Default for MemoPlaintext {
     fn default() -> MemoPlaintext {
-        MemoPlaintext([0u8; MEMO_LEN_BYTES])
+        MemoPlaintext(String::new())
     }
 }
 
@@ -42,10 +42,17 @@ impl TryFrom<&[u8]> for MemoPlaintext {
         if input.len() > MEMO_LEN_BYTES {
             return Err(anyhow::anyhow!("provided memo exceeds maximum memo size"));
         }
-        let mut mp = [0u8; MEMO_LEN_BYTES];
-        mp[..input.len()].copy_from_slice(input);
+        let s: String = input.into_iter().map(|i| i.to_string()).collect::<String>();
+        Ok(MemoPlaintext(s))
+    }
+}
 
-        Ok(MemoPlaintext(mp))
+impl From<[u8; MEMO_LEN_BYTES]> for MemoPlaintext {
+    fn from(input: [u8; MEMO_LEN_BYTES]) -> MemoPlaintext {
+        let no_pad = MemoPlaintext::strip_padding(input);
+        let s: String = String::from_utf8_lossy(&no_pad).to_string();
+        println!("Behold the string: {:?}", s);
+        MemoPlaintext(s)
     }
 }
 
@@ -55,7 +62,7 @@ pub struct MemoCiphertext(pub [u8; MEMO_CIPHERTEXT_LEN_BYTES]);
 impl MemoPlaintext {
     /// Encrypt a memo, returning its ciphertext.
     pub fn encrypt(&self, memo_key: PayloadKey) -> MemoCiphertext {
-        let encryption_result = memo_key.encrypt(self.0.to_vec(), PayloadKind::Memo);
+        let encryption_result = memo_key.encrypt(self.as_bytes().to_vec(), PayloadKind::Memo);
         let ciphertext: [u8; MEMO_CIPHERTEXT_LEN_BYTES] = encryption_result
             .try_into()
             .expect("memo encryption result fits in ciphertext len");
@@ -75,7 +82,17 @@ impl MemoPlaintext {
             .try_into()
             .map_err(|_| anyhow!("could not fit plaintext into memo size"))?;
 
-        Ok(MemoPlaintext(plaintext_bytes))
+        // Strip zero-byte padding
+        let no_pad: Vec<u8> = MemoPlaintext::strip_padding(plaintext_bytes);
+        let plaintext_str = String::from_utf8_lossy(no_pad.as_slice());
+        Ok(MemoPlaintext(plaintext_str.to_string()))
+    }
+
+    /// Removes zero-byte padding from a slice of bytes
+    pub fn strip_padding(input: [u8; MEMO_LEN_BYTES]) -> Vec<u8> {
+        // TODO: Make this less naive; should only strip trailing contiguous zero-bytes.
+        let result: Vec<u8> = input.into_iter().filter(|&x| x != 0u8).collect();
+        result
     }
 
     /// Decrypt a `MemoCiphertext` using the wrapped OVK to generate a plaintext `Memo`.
@@ -104,7 +121,18 @@ impl MemoPlaintext {
             .try_into()
             .map_err(|_| anyhow!("could not fit plaintext into memo size"))?;
 
-        Ok(MemoPlaintext(plaintext_bytes))
+        let no_pad = MemoPlaintext::strip_padding(plaintext_bytes);
+        let plaintext_str = String::from_utf8_lossy(no_pad.as_slice());
+
+        Ok(MemoPlaintext(plaintext_str.to_string()))
+    }
+
+    /// Provide a custom bytes representation, ensuring that we always pad to exactly MEMO_LEN_BYTES,
+    /// for ergonomic interfacing with cryptographic functions.
+    pub fn as_bytes(&self) -> [u8; MEMO_LEN_BYTES] {
+        let mut ab: [u8; MEMO_LEN_BYTES] = [0u8; MEMO_LEN_BYTES];
+        ab[..self.0.as_bytes().len()].copy_from_slice(&self.0.as_bytes());
+        ab
     }
 }
 
@@ -147,14 +175,13 @@ mod tests {
         let ivk = fvk.incoming();
         let (dest, _dtk_d) = ivk.payment_address(0u64.into());
 
-        let mut memo_bytes = [0u8; MEMO_LEN_BYTES];
-        memo_bytes[0..2].copy_from_slice(b"Hi");
+        let memo_s = "Hi";
 
         let esk = ka::Secret::new(&mut rng);
 
         // On the sender side, we have to encrypt the memo to put into the transaction-level,
         // and also the memo key to put on the action-level (output).
-        let memo = MemoPlaintext(memo_bytes);
+        let memo = MemoPlaintext(memo_s.to_string());
         let memo_key = PayloadKey::random_key(&mut OsRng);
         let ciphertext = memo.encrypt(memo_key.clone());
         let wrapped_memo_key = WrappedMemoKey::encrypt(
@@ -187,8 +214,7 @@ mod tests {
         let ovk = fvk.outgoing();
         let (dest, _dtk_d) = ivk.payment_address(0u64.into());
 
-        let mut memo_bytes = [0u8; MEMO_LEN_BYTES];
-        memo_bytes[0..2].copy_from_slice(b"Hi");
+        let memo_s = "Hi";
 
         let esk = ka::Secret::new(&mut rng);
 
@@ -200,7 +226,7 @@ mod tests {
 
         // On the sender side, we have to encrypt the memo to put into the transaction-level,
         // and also the memo key to put on the action-level (output).
-        let memo = MemoPlaintext(memo_bytes);
+        let memo = MemoPlaintext(memo_s.to_string());
         let memo_key = PayloadKey::random_key(&mut OsRng);
         let ciphertext = memo.encrypt(memo_key.clone());
         let wrapped_memo_key = WrappedMemoKey::encrypt(
@@ -228,5 +254,20 @@ mod tests {
         .expect("can decrypt memo");
 
         assert_eq!(plaintext, memo);
+    }
+    #[test]
+    fn test_memo_created_from_string() {
+        let s = String::from("Hello, friend");
+        let mp = MemoPlaintext(s.clone());
+        assert_eq!(s, mp.0);
+    }
+
+    #[test]
+    fn test_memo_created_from_bytes() {
+        let b = b"Hello, friend";
+        let mut t = [0u8; MEMO_LEN_BYTES];
+        t[..b.len()].copy_from_slice(b);
+        let mp = MemoPlaintext::from(t);
+        assert_eq!(String::from_utf8_lossy(b), mp.0);
     }
 }

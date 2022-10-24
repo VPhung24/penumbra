@@ -31,7 +31,7 @@ impl Protobuf<pb::MemoPlan> for MemoPlan {}
 impl From<MemoPlan> for pb::MemoPlan {
     fn from(msg: MemoPlan) -> Self {
         Self {
-            plaintext: Bytes::copy_from_slice(&msg.plaintext.0),
+            plaintext: Bytes::copy_from_slice(&msg.plaintext.as_bytes()),
             key: msg.key.to_vec().into(),
         }
     }
@@ -43,7 +43,7 @@ impl TryFrom<pb::MemoPlan> for MemoPlan {
     fn try_from(msg: pb::MemoPlan) -> Result<Self, Self::Error> {
         let plaintext_bytes: [u8; MEMO_LEN_BYTES] = msg.plaintext.as_ref().try_into()?;
         Ok(Self {
-            plaintext: MemoPlaintext(plaintext_bytes),
+            plaintext: MemoPlaintext::from(plaintext_bytes),
             key: PayloadKey::try_from(msg.key.to_vec())?,
         })
     }
