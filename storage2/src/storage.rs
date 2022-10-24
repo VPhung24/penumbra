@@ -40,7 +40,7 @@ impl Storage {
                     )?);
                     let static_db: &'static DB = Box::leak(db);
                     let jmt_version = latest_version(static_db)?
-                        .ok_or(anyhow::anyhow!("no jmt version found"))?;
+                        .ok_or_else(|| anyhow::anyhow!("no jmt version found"))?;
                     let latest_snapshot = {
                         let snap = Arc::new(static_db.snapshot());
                         Snapshot::new(snap, jmt_version, static_db)

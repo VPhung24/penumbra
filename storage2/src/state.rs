@@ -10,7 +10,6 @@ use futures::Stream;
 pub use read::StateRead;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tracing::Span;
 pub use transaction::Transaction as StateTransaction;
 pub use write::StateWrite;
 
@@ -37,21 +36,6 @@ impl State {
 
     pub fn begin_transaction(&mut self) -> StateTransaction {
         StateTransaction::new(self)
-    }
-
-    pub fn apply_transaction(&mut self, transaction: StateTransaction) -> Result<()> {
-        if transaction.failed {
-            return Err(anyhow::anyhow!("transaction failed").context(transaction.failure_reason));
-        }
-
-        // Write the unwritten consensus-critical changes to the state:
-        self.unwritten_changes.extend(transaction.unwritten_changes);
-
-        // Write the unwritten nonconsensus changes to the state:
-        self.nonconsensus_changes
-            .extend(transaction.nonconsensus_changes);
-
-        Ok(())
     }
 }
 
