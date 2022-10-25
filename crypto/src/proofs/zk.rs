@@ -127,6 +127,8 @@ impl OutputProof {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use rand_core::OsRng;
 
     use super::*;
@@ -138,20 +140,29 @@ mod test {
         // Random (non-zero) diversified base
         let random_fq = Fq::rand(&mut rng);
         let g_d = decaf377::Element::encode_to_curve(&random_fq);
+        let start = Instant::now();
         let (pk, vk) = OutputProof::setup(&mut rng)
             .expect("can perform test Groth16 setup for output circuit");
+        let duration = start.elapsed();
+        println!("Time elapsed in setup: {:?}", duration);
 
         let esk = ka::Secret::new(&mut rng);
         let epk = esk.public();
 
+        let start = Instant::now();
         let proof = OutputProof::new(&mut rng, &pk, g_d, esk, epk)
             .expect("can prove using a test output circuit");
+        let duration = start.elapsed();
+        println!("Time elapsed in proof creation: {:?}", duration);
 
         let pk = decaf377::Encoding(epk.0)
             .vartime_decompress()
             .expect("valid public key");
         let epk_fq = pk.vartime_compress_to_field();
+        let start = Instant::now();
         assert!(proof.verify(&vk, &[epk_fq]).unwrap());
+        let duration = start.elapsed();
+        println!("Time elapsed in proof verification: {:?}", duration);
     }
 
     #[test]
