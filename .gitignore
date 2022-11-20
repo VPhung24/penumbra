@@ -35,3 +35,4 @@ target/
 
 # generated protos
 swift_protos/
+go-proto/

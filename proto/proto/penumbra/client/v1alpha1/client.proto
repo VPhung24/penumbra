@@ -1,4 +1,5 @@
 syntax = "proto3";
+option go_package = "github.com/penumbra-zone/penumbra/proto/go-proto";
 
 package penumbra.client.v1alpha1;
 

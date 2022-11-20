@@ -10,3 +10,13 @@ plugins:
     opt:
       - FileNaming=PathToUnderscores
       - Visibility=Public
+  - name: go
+    out: go-proto
+    opt:
+      - Mgoogle/protobuf/any.proto=github.com/cosmos/cosmos-sdk/codec/types
+      - paths=source_relative
+  - name: go-grpc
+    out: go-proto
+    opt:
+      - Mgoogle/protobuf/any.proto=github.com/cosmos/cosmos-sdk/codec/types
+      - paths=source_relative
