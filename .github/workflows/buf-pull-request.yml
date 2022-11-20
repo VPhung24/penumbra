@@ -59,3 +59,24 @@ jobs:
           else
               echo "OK: no changes required to protobuf specs"
           fi
+      - name: Install Packages for swift
+        uses: ConorMacBride/install-package@v1.1.0
+        with:
+          brew: swift-protobuf grpc-swift
+      - name: Compile protobuf specs into swift files
+        shell: bash
+        run: |
+          cd proto
+          buf generate
+          echo "swift generated"
+      - name: Deploy workspace folder to repo
+        uses: hpcodecraft/action-deploy-workspace-to-repo@v2.2
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_ACCESS_TOKEN }}
+          SRC_FOLDER: ${{ github.workspace }}/penumbra/proto/swift_protos
+          DEST_OWNER: VPhung24
+          DEST_REPO: git@github.com:VPhung24/PenumbraiOS.git
+          DEST_BRANCH: main
+          DEST_FOLDER: tools
+          DEST_PREDEPLOY_CLEANUP: "rm -rvf tools/swift_protos"
+
