@@ -1,0 +1,28 @@
+name: update swift protos
+run-name: generate swift protos
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'proto/proto/**/**.protos'  
+      - 'proto/ibc-go-vendor/**/**.protos'  
+jobs:
+  Update-Swift-Protos:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "protos updated... generate new swift portos"
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
+      - run: echo "setup python"
+      - name: setup python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: brew install swift-protobuf grpc-swift
+      - name: List files in the repository
+        run: |
+          ls ${{ github.workspace }}
+      
+      - run: echo "🍏 This job's status is ${{ job.status }}."
