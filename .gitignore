@@ -32,3 +32,6 @@ target/
 
 # Python3
 .venv
+
+# generated protos
+swift_protos/

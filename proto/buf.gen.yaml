@@ -1,0 +1,12 @@
+version: v1
+plugins:
+  - name: swift
+    out: swift_protos
+    opt:
+      - FileNaming=PathToUnderscores
+      - Visibility=Public
+  - name: grpc-swift
+    out: swift_protos
+    opt:
+      - FileNaming=PathToUnderscores
+      - Visibility=Public
