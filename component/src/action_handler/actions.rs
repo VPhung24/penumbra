@@ -23,7 +23,7 @@ mod validator_vote;
 
 #[async_trait]
 impl ActionHandler for Action {
-    fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
         match self {
             Action::Delegate(action) => action.check_stateless(context),
             Action::Undelegate(action) => action.check_stateless(context),
@@ -42,39 +42,35 @@ impl ActionHandler for Action {
             Action::IBCAction(action) => action.check_stateless(context),
             Action::Ics20Withdrawal(action) => action.check_stateless(context),
         }
+        .await
     }
 
-    async fn check_stateful(&self, state: Arc<State>, context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         match self {
-            Action::Delegate(action) => action.check_stateful(state, context.clone()).await,
-            Action::Undelegate(action) => action.check_stateful(state, context.clone()).await,
-            Action::ValidatorDefinition(action) => {
-                action.check_stateful(state, context.clone()).await
-            }
-            Action::ValidatorVote(action) => action.check_stateful(state, context.clone()).await,
-            Action::PositionClose(action) => action.check_stateful(state, context.clone()).await,
-            Action::PositionOpen(action) => action.check_stateful(state, context.clone()).await,
-            Action::PositionRewardClaim(action) => {
-                action.check_stateful(state, context.clone()).await
-            }
-            Action::PositionWithdraw(action) => action.check_stateful(state, context.clone()).await,
-            Action::ProposalSubmit(action) => action.check_stateful(state, context.clone()).await,
-            Action::ProposalWithdraw(action) => action.check_stateful(state, context.clone()).await,
-            Action::Swap(action) => action.check_stateful(state, context.clone()).await,
-            Action::SwapClaim(action) => action.check_stateful(state, context.clone()).await,
-            Action::Spend(action) => action.check_stateful(state, context.clone()).await,
-            Action::Output(action) => action.check_stateful(state, context.clone()).await,
+            Action::Delegate(action) => action.check_stateful(state).await,
+            Action::Undelegate(action) => action.check_stateful(state).await,
+            Action::ValidatorDefinition(action) => action.check_stateful(state).await,
+            Action::ValidatorVote(action) => action.check_stateful(state).await,
+            Action::PositionClose(action) => action.check_stateful(state).await,
+            Action::PositionOpen(action) => action.check_stateful(state).await,
+            Action::PositionRewardClaim(action) => action.check_stateful(state).await,
+            Action::PositionWithdraw(action) => action.check_stateful(state).await,
+            Action::ProposalSubmit(action) => action.check_stateful(state).await,
+            Action::ProposalWithdraw(action) => action.check_stateful(state).await,
+            Action::Swap(action) => action.check_stateful(state).await,
+            Action::SwapClaim(action) => action.check_stateful(state).await,
+            Action::Spend(action) => action.check_stateful(state).await,
+            Action::Output(action) => action.check_stateful(state).await,
             Action::IBCAction(action) => {
-                if context.ibc_actions().count() > 0 && !state.get_chain_params().await?.ibc_enabled
-                {
+                if !state.get_chain_params().await?.ibc_enabled {
                     return Err(anyhow::anyhow!(
                         "transaction contains IBC actions, but IBC is not enabled"
                     ));
                 }
 
-                action.check_stateful(state, context.clone()).await
+                action.check_stateful(state).await
             }
-            Action::Ics20Withdrawal(action) => action.check_stateful(state, context.clone()).await,
+            Action::Ics20Withdrawal(action) => action.check_stateful(state).await,
         }
     }
 

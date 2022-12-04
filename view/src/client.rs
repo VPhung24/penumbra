@@ -8,11 +8,10 @@ use penumbra_crypto::{asset, keys::AddressIndex, note, Asset, Nullifier};
 use penumbra_proto::view::v1alpha1::{
     self as pb, view_protocol_service_client::ViewProtocolServiceClient, WitnessRequest,
 };
-use penumbra_tct::Proof;
+
 use penumbra_transaction::{
     plan::TransactionPlan, Transaction, TransactionPerspective, WitnessData,
 };
-use rand::Rng;
 use tendermint_rpc::abci;
 use tonic::async_trait;
 use tonic::codegen::Bytes;
@@ -94,7 +93,6 @@ pub trait ViewClient {
     async fn witness(
         &mut self,
         account_id: AccountID,
-        mut rng: impl Rng,
         plan: &TransactionPlan,
     ) -> Result<WitnessData>
     where
@@ -292,27 +290,27 @@ where
     async fn chain_params(&mut self) -> Result<ChainParameters> {
         // We have to manually invoke the method on the type, because it has the
         // same name as the one we're implementing.
-        let params = ViewProtocolServiceClient::chain_parameters(
+        ViewProtocolServiceClient::chain_parameters(
             self,
-            tonic::Request::new(pb::ChainParamsRequest {}),
+            tonic::Request::new(pb::ChainParametersRequest {}),
         )
         .await?
         .into_inner()
-        .try_into()?;
-
-        Ok(params)
+        .try_into()
     }
 
     async fn fmd_parameters(&mut self) -> Result<FmdParameters> {
-        let params = ViewProtocolServiceClient::fmd_parameters(
+        let parameters = ViewProtocolServiceClient::fmd_parameters(
             self,
             tonic::Request::new(pb::FmdParametersRequest {}),
         )
         .await?
         .into_inner()
-        .try_into()?;
+        .parameters;
 
-        Ok(params)
+        parameters
+            .ok_or_else(|| anyhow::anyhow!("empty FmdParametersRequest message"))?
+            .try_into()
     }
 
     async fn notes(&mut self, request: pb::NotesRequest) -> Result<Vec<SpendableNoteRecord>> {
@@ -323,7 +321,20 @@ where
             .try_collect()
             .await?;
 
-        pb_notes.into_iter().map(TryInto::try_into).collect()
+        let notes: Result<Vec<SpendableNoteRecord>> = pb_notes
+            .into_iter()
+            .map(|note_rsp| {
+                let note_record = note_rsp
+                    .note_record
+                    .ok_or_else(|| anyhow::anyhow!("empty NotesResponse message"));
+
+                match note_record {
+                    Ok(note) => note.try_into(),
+                    Err(e) => Err(e),
+                }
+            })
+            .collect();
+        Ok(notes?)
     }
 
     async fn quarantined_notes(
@@ -337,7 +348,21 @@ where
             .try_collect()
             .await?;
 
-        pb_notes.into_iter().map(TryInto::try_into).collect()
+        let notes: Result<Vec<QuarantinedNoteRecord>> = pb_notes
+            .into_iter()
+            .map(|note_rsp| {
+                let note_record = note_rsp
+                    .note_record
+                    .ok_or_else(|| anyhow::anyhow!("empty QuarantinedNotesResponse message"));
+
+                match note_record {
+                    Ok(note) => note.try_into(),
+                    Err(e) => Err(e),
+                }
+            })
+            .collect();
+
+        Ok(notes?)
     }
 
     async fn note_by_commitment(
@@ -345,7 +370,7 @@ where
         account_id: AccountID,
         note_commitment: note::Commitment,
     ) -> Result<SpendableNoteRecord> {
-        ViewProtocolServiceClient::note_by_commitment(
+        let note_commitment_response = ViewProtocolServiceClient::note_by_commitment(
             self,
             tonic::Request::new(pb::NoteByCommitmentRequest {
                 account_id: Some(account_id.into()),
@@ -354,8 +379,12 @@ where
             }),
         )
         .await?
-        .into_inner()
-        .try_into()
+        .into_inner();
+
+        note_commitment_response
+            .spendable_note
+            .ok_or_else(|| anyhow::anyhow!("empty NoteByCommitmentResponse message"))?
+            .try_into()
     }
 
     /// Queries for a specific note by commitment, waiting until the note is detected if it is not found.
@@ -366,7 +395,7 @@ where
         account_id: AccountID,
         note_commitment: note::Commitment,
     ) -> Result<SpendableNoteRecord> {
-        ViewProtocolServiceClient::note_by_commitment(
+        let spendable_note = ViewProtocolServiceClient::note_by_commitment(
             self,
             tonic::Request::new(pb::NoteByCommitmentRequest {
                 account_id: Some(account_id.into()),
@@ -376,7 +405,11 @@ where
         )
         .await?
         .into_inner()
-        .try_into()
+        .spendable_note;
+
+        spendable_note
+            .ok_or_else(|| anyhow::anyhow!("empty NoteByCommitmentRequest message"))?
+            .try_into()
     }
 
     /// Queries for a specific nullifier's status, returning immediately if it is not found.
@@ -417,7 +450,6 @@ where
     async fn witness(
         &mut self,
         account_id: AccountID,
-        mut rng: impl Rng,
         plan: &TransactionPlan,
     ) -> Result<WitnessData>
     where
@@ -438,23 +470,16 @@ where
         let request = WitnessRequest {
             account_id: Some(account_id.into()),
             note_commitments,
+            transaction_plan: Some(plan.clone().into()),
         };
 
-        let mut witness_data: WitnessData = self
+        let witness_data = self
             .witness(tonic::Request::new(request))
             .await?
             .into_inner()
+            .witness_data
+            .ok_or_else(|| anyhow::anyhow!("empty WitnessResponse message"))?
             .try_into()?;
-
-        // Now we need to augment the witness data with dummy proofs such that
-        // note commitments corresponding to dummy spends also have proofs.
-        for nc in plan
-            .spend_plans()
-            .filter(|plan| plan.note.amount() == 0u64.into())
-            .map(|plan| plan.note.commit())
-        {
-            witness_data.add_proof(nc, Proof::dummy(&mut rng, nc));
-        }
 
         Ok(witness_data)
     }
@@ -463,7 +488,7 @@ where
         // We have to manually invoke the method on the type, because it has the
         // same name as the one we're implementing.
         let pb_assets: Vec<_> =
-            ViewProtocolServiceClient::assets(self, tonic::Request::new(pb::AssetRequest {}))
+            ViewProtocolServiceClient::assets(self, tonic::Request::new(pb::AssetsRequest {}))
                 .await?
                 .into_inner()
                 .try_collect()
@@ -483,7 +508,7 @@ where
         end_height: Option<u64>,
     ) -> Result<Vec<(u64, Vec<u8>)>> {
         let pb_txs: Vec<_> = self
-            .transaction_hashes(tonic::Request::new(pb::TransactionsRequest {
+            .transaction_hashes(tonic::Request::new(pb::TransactionHashesRequest {
                 start_height,
                 end_height,
             }))
@@ -549,11 +574,16 @@ where
             .try_collect()
             .await?;
 
-        let txs = pb_txs
+        pb_txs
             .into_iter()
-            .map(|x| (x.block_height, x.tx.unwrap().try_into().unwrap()))
-            .collect();
-
-        Ok(txs)
+            .map(|tx_rsp| {
+                let tx = tx_rsp
+                    .tx
+                    .ok_or_else(|| anyhow::anyhow!("empty TransactionsResponse message"))?
+                    .try_into()?;
+                let height = tx_rsp.block_height;
+                Ok((height, tx))
+            })
+            .collect()
     }
 }

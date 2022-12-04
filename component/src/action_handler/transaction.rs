@@ -24,7 +24,7 @@ use stateless::{at_most_one_undelegate, no_duplicate_nullifiers, valid_binding_s
 
 #[async_trait]
 impl ActionHandler for Transaction {
-    fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
         // TODO: add a check that ephemeral_key is not identity to prevent scanning dos attack ?
 
         valid_binding_signature(self)?;
@@ -33,7 +33,7 @@ impl ActionHandler for Transaction {
 
         // TODO: these can all be parallel tasks
         for action in self.actions() {
-            action.check_stateless(context.clone())?;
+            action.check_stateless(context.clone()).await?;
         }
 
         // TODO: move these out of component code?
@@ -43,22 +43,30 @@ impl ActionHandler for Transaction {
         Ok(())
     }
 
-    async fn check_stateful(&self, state: Arc<State>, context: Arc<Transaction>) -> Result<()> {
-        claimed_anchor_is_valid(state.clone(), context.clone()).await?;
-
-        fmd_parameters_valid(state.clone(), context.clone()).await?;
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
+        claimed_anchor_is_valid(state.clone(), self).await?;
+        fmd_parameters_valid(state.clone(), self).await?;
 
         // TODO: these can all be parallel tasks
         for action in self.actions() {
-            action
-                .check_stateful(state.clone(), context.clone())
-                .await?;
+            action.check_stateful(state.clone()).await?;
         }
 
         Ok(())
     }
 
     async fn execute(&self, state: &mut StateTransaction) -> Result<()> {
+        // TODO: we'd ideally like to get rid of all of the code in the body of this
+        // function, and just call each individual ActionHandler.
+        //
+        // We can't do this currently, for two reasons:
+        //
+        // 1. The existing quarantining system means we have to quarantine outputs
+        // on a transaction-wide basis, not an action-by-action one;
+        //
+        // 2. We currently use this method to construct the `source` we use for the
+        // `AnnotatedNoteSource`; we'll need a way to plumb that through to other
+        // ActionHandlers (perhaps by using the StateTransaction's object store...)
         let source = NoteSource::Transaction { id: self.id() };
 
         if let Some((epoch, identity_key)) = state.should_quarantine(self).await {

@@ -1,7 +1,6 @@
 //! Transparent proofs for `MVP1` of the Penumbra system.
 
 use anyhow::{anyhow, Error, Result};
-use ark_ff::PrimeField;
 use std::convert::{TryFrom, TryInto};
 
 use decaf377::FieldExt;
@@ -12,7 +11,7 @@ use penumbra_tct as tct;
 use super::transparent_gadgets as gadgets;
 use crate::{
     asset, balance,
-    dex::{BatchSwapOutputData, TradingPair},
+    dex::{swap::SwapPlaintext, BatchSwapOutputData, TradingPair},
     ka, keys, note,
     transaction::Fee,
     Address, Balance, Fq, Fr, Note, Nullifier, Value,
@@ -293,8 +292,6 @@ impl TryFrom<&[u8]> for OutputProof {
 pub struct SwapClaimProof {
     // Describes the input note with the Swap NFT
 
-    // The asset ID of the swap NFT.
-    pub swap_nft_asset_id: asset::Id,
     // The address associated with the swap NFT and outputs.
     pub claim_address: Address,
     // Proves the note commitment was included in the TCT.
@@ -314,12 +311,13 @@ pub struct SwapClaimProof {
     pub lambda_2_i: u64,
 
     // Describes first output note (lambda 1)
-    pub note_blinding_1: Fq,
     pub esk_1: ka::Secret,
 
     // Describes second output note (lambda 2)
-    pub note_blinding_2: Fq,
     pub esk_2: ka::Secret,
+
+    // The blinding factor for the swap
+    pub swap_blinding: Fq,
 }
 
 impl SwapClaimProof {
@@ -350,26 +348,28 @@ impl SwapClaimProof {
             .verify(anchor)
             .map_err(|_| anyhow!("merkle root mismatch"))?;
 
+        // Generate swap plaintext from which to generate the asset ID
+        // TODO: store all of these fields as a SwapPlaintext in the proof ?
+        let swap_plaintext = SwapPlaintext {
+            trading_pair: self.trading_pair.clone(),
+            delta_1_i: self.delta_1_i.into(),
+            delta_2_i: self.delta_2_i.into(),
+            claim_fee: fee,
+            claim_address: self.claim_address,
+            swap_blinding: self.swap_blinding,
+        };
+
         // Check that the provided note commitment is for the proof's Swap NFT.
         let note = Note::from_parts(
             self.claim_address,
             Value {
                 amount: 1u64.into(),
-                asset_id: self.swap_nft_asset_id,
+                asset_id: swap_plaintext.asset_id(),
             },
             self.note_blinding,
         )?;
-        gadgets::note_commitment_integrity(note, self.note_commitment_proof.commitment())?;
 
-        // Check that the Swap NFT asset ID is properly constructed.
-        gadgets::swap_nft_asset_id_integrity(
-            self.swap_nft_asset_id,
-            self.trading_pair.clone(),
-            self.delta_1_i,
-            self.delta_2_i,
-            fee,
-            self.claim_address,
-        )?;
+        gadgets::note_commitment_integrity(note, self.note_commitment_proof.commitment())?;
 
         // Validate the note commitment's height matches the output data's height.
         let position = self.note_commitment_proof.position();
@@ -409,13 +409,15 @@ impl SwapClaimProof {
             self.claim_address.diversified_generator().clone(),
         )?;
 
+        let (note_blinding_1, note_blinding_2) = swap_plaintext.output_blinding_factors();
+
         // Check output 1
         let value_1 = Value {
             amount: self.lambda_1_i.into(),
             asset_id: self.trading_pair.asset_1(),
         };
         gadgets::note_commitment_integrity(
-            Note::from_parts(self.claim_address, value_1, self.note_blinding_1)?,
+            Note::from_parts(self.claim_address, value_1, note_blinding_1)?,
             note_commitment_1,
         )?;
         gadgets::ephemeral_public_key_integrity(
@@ -430,7 +432,7 @@ impl SwapClaimProof {
             asset_id: self.trading_pair.asset_2(),
         };
         gadgets::note_commitment_integrity(
-            Note::from_parts(self.claim_address, value_2, self.note_blinding_2)?,
+            Note::from_parts(self.claim_address, value_2, note_blinding_2)?,
             note_commitment_2,
         )?;
         gadgets::ephemeral_public_key_integrity(
@@ -475,13 +477,11 @@ impl From<SwapClaimProof> for transparent_proofs::SwapClaimProof {
             delta_2_i: msg.delta_2_i,
             lambda_1_i: msg.lambda_1_i,
             lambda_2_i: msg.lambda_2_i,
-            note_blinding_1: msg.note_blinding_1.to_bytes().to_vec(),
-            note_blinding_2: msg.note_blinding_2.to_bytes().to_vec(),
             esk_1: msg.esk_1.to_bytes().to_vec(),
             esk_2: msg.esk_2.to_bytes().to_vec(),
-            swap_nft_asset_id: msg.swap_nft_asset_id.0.to_bytes().to_vec(),
             note_blinding: msg.note_blinding.to_bytes().to_vec(),
             nk: nk_bytes.into(),
+            swap_blinding: msg.swap_blinding.to_bytes().to_vec(),
         }
     }
 }
@@ -506,8 +506,6 @@ impl TryFrom<transparent_proofs::SwapClaimProof> for SwapClaimProof {
         Ok(SwapClaimProof {
             esk_1,
             esk_2,
-            note_blinding_1: Fq::from_le_bytes_mod_order(&proto.note_blinding_1),
-            note_blinding_2: Fq::from_le_bytes_mod_order(&proto.note_blinding_2),
             lambda_2_i: proto.lambda_2_i,
             lambda_1_i: proto.lambda_1_i,
             delta_2_i: proto.delta_2_i,
@@ -527,15 +525,6 @@ impl TryFrom<transparent_proofs::SwapClaimProof> for SwapClaimProof {
                 .ok_or_else(|| anyhow!("proto malformed"))?
                 .try_into()
                 .map_err(|_| anyhow!("proto malformed"))?,
-            swap_nft_asset_id: asset::Id(
-                Fq::from_bytes(
-                    proto
-                        .swap_nft_asset_id
-                        .try_into()
-                        .map_err(|_| anyhow!("proto malformed"))?,
-                )
-                .map_err(|_| anyhow!("proto malformed"))?,
-            ),
             note_blinding: Fq::from_bytes(
                 proto.note_blinding[..]
                     .try_into()
@@ -550,6 +539,12 @@ impl TryFrom<transparent_proofs::SwapClaimProof> for SwapClaimProof {
                 )
                 .map_err(|_| anyhow!("proto malformed"))?,
             ),
+            swap_blinding: Fq::from_bytes(
+                proto.swap_blinding[..]
+                    .try_into()
+                    .map_err(|_| anyhow!("proto malformed"))?,
+            )
+            .map_err(|_| anyhow!("proto malformed"))?,
         })
     }
 }
@@ -571,12 +566,12 @@ pub struct SwapProof {
     pub fee_delta: Fee,
     // The blinding factor for the fee.
     pub fee_blinding: Fr,
-    // The asset ID of the Swap NFT.
-    pub swap_nft_asset_id: asset::Id,
     // The blinding factor used for generating the note commitment for the Swap NFT.
     pub note_blinding: Fq,
     // The ephemeral secret key that corresponds to the public key.
     pub esk: ka::Secret,
+    // The blinding factor for the swap
+    pub swap_blinding: Fq,
     // TODO: no value commitments for delta 1/delta 2 until flow encryption is available
     // // The blinding factor used for generating the value commitment for delta 1.
     // pub delta_1_blinding: Fr,
@@ -601,6 +596,18 @@ impl SwapProof {
         note_commitment: note::Commitment,
         epk: ka::Public,
     ) -> anyhow::Result<(), Error> {
+        // Generate trading pair & swap plaintext from parts, in order to include asset id generation in verification
+        let trading_pair = TradingPair::new(self.value_t1.asset_id, self.value_t2.asset_id)?;
+
+        let swap_plaintext = SwapPlaintext {
+            trading_pair,
+            delta_1_i: self.value_t1.amount,
+            delta_2_i: self.value_t2.amount,
+            claim_fee: self.fee_delta.clone(),
+            claim_address: self.claim_address,
+            swap_blinding: self.swap_blinding,
+        };
+
         // Checks the note commitment of the Swap NFT.
         gadgets::note_commitment_integrity(
             Note::from_parts(
@@ -608,7 +615,7 @@ impl SwapProof {
                 Value {
                     // The swap NFT is always amount 1.
                     amount: 1u64.into(),
-                    asset_id: self.swap_nft_asset_id,
+                    asset_id: swap_plaintext.asset_id(),
                 },
                 self.note_blinding,
             )?,
@@ -657,12 +664,12 @@ impl From<SwapProof> for transparent_proofs::SwapProof {
             t2: msg.value_t2.asset_id.0.to_bytes().to_vec(),
             fee: Some(msg.fee_delta.into()),
             fee_blinding: msg.fee_blinding.to_bytes().to_vec(),
-            swap_nft_asset_id: msg.swap_nft_asset_id.0.to_bytes().to_vec(),
             // TODO: no value commitments for delta 1/delta 2 until flow encryption is available
             // delta_1_blinding: msg.delta_1_blinding.to_bytes().to_vec(),
             // delta_2_blinding: msg.delta_2_blinding.to_bytes().to_vec(),
             note_blinding: msg.note_blinding.to_bytes().to_vec(),
             esk: msg.esk.to_bytes().to_vec(),
+            swap_blinding: msg.swap_blinding.to_bytes().to_vec(),
         }
     }
 }
@@ -727,15 +734,6 @@ impl TryFrom<transparent_proofs::SwapProof> for SwapProof {
                 .try_into()
                 .map_err(|_| anyhow!("proto malformed"))?,
             fee_blinding: Fr::from_bytes(fee_blinding_bytes)?,
-            swap_nft_asset_id: asset::Id(
-                Fq::from_bytes(
-                    proto
-                        .swap_nft_asset_id
-                        .try_into()
-                        .map_err(|_| anyhow!("proto malformed"))?,
-                )
-                .map_err(|_| anyhow!("proto malformed"))?,
-            ),
             // TODO: no value commitment checks until flow encryption is available
             // delta_1_blinding: Fr::from_bytes(delta_1_blinding_bytes)
             //     .map_err(|_| anyhow!("proto malformed"))?,
@@ -748,6 +746,12 @@ impl TryFrom<transparent_proofs::SwapProof> for SwapProof {
             )
             .map_err(|_| anyhow!("proto malformed"))?,
             esk,
+            swap_blinding: Fq::from_bytes(
+                proto.swap_blinding[..]
+                    .try_into()
+                    .map_err(|_| anyhow!("proto malformed"))?,
+            )
+            .map_err(|_| anyhow!("proto malformed"))?,
         })
     }
 }
@@ -787,7 +791,7 @@ mod tests {
     fn test_output_proof_verification_success() {
         let mut rng = OsRng;
 
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_recipient = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_recipient = sk_recipient.full_viewing_key();
         let ivk_recipient = fvk_recipient.incoming();
@@ -822,7 +826,7 @@ mod tests {
     fn test_output_proof_verification_note_commitment_integrity_failure() {
         let mut rng = OsRng;
 
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_recipient = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_recipient = sk_recipient.full_viewing_key();
         let ivk_recipient = fvk_recipient.incoming();
@@ -869,7 +873,7 @@ mod tests {
     fn test_output_proof_verification_balance_commitment_integrity_failure() {
         let mut rng = OsRng;
 
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_recipient = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_recipient = sk_recipient.full_viewing_key();
         let ivk_recipient = fvk_recipient.incoming();
@@ -904,7 +908,7 @@ mod tests {
     fn test_output_proof_verification_ephemeral_public_key_integrity_failure() {
         let mut rng = OsRng;
 
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_recipient = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_recipient = sk_recipient.full_viewing_key();
         let ivk_recipient = fvk_recipient.incoming();
@@ -940,7 +944,7 @@ mod tests {
     fn test_spend_proof_verification_success() {
         let mut rng = OsRng;
 
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_sender = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_sender = sk_sender.full_viewing_key();
         let ivk_sender = fvk_sender.incoming();
@@ -984,7 +988,7 @@ mod tests {
     // NCT root (`anchor`).
     fn test_spend_proof_verification_merkle_path_integrity_failure() {
         let mut rng = OsRng;
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_sender = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_sender = sk_sender.full_viewing_key();
         let ivk_sender = fvk_sender.incoming();
@@ -1028,7 +1032,7 @@ mod tests {
     /// commitments with different blinding factors.
     fn test_spend_proof_verification_balance_commitment_integrity_failure() {
         let mut rng = OsRng;
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_sender = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_sender = sk_sender.full_viewing_key();
         let ivk_sender = fvk_sender.incoming();
@@ -1079,7 +1083,7 @@ mod tests {
     /// incorrect nullifier.
     fn test_spend_proof_verification_nullifier_integrity_failure() {
         let mut rng = OsRng;
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk_sender = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk_sender = sk_sender.full_viewing_key();
         let ivk_sender = fvk_sender.incoming();

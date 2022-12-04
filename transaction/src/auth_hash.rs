@@ -30,7 +30,7 @@ impl Default for AuthHash {
 impl std::fmt::Debug for AuthHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("AuthHash")
-            .field(&hex::encode(&self.0))
+            .field(&hex::encode(self.0))
             .finish()
     }
 }
@@ -543,8 +543,8 @@ mod tests {
     /// we compute the same auth hash for the plan and for the transaction.
     #[test]
     fn plan_auth_hash_matches_transaction_auth_hash() {
-        let mut rng = OsRng;
-        let seed_phrase = SeedPhrase::generate(&mut rng);
+        let rng = OsRng;
+        let seed_phrase = SeedPhrase::generate(rng);
         let sk = SpendKey::from_seed_phrase(seed_phrase, 0);
         let fvk = sk.full_viewing_key();
         let (addr, _dtk) = fvk.incoming().payment_address(0u64.into());
@@ -577,16 +577,17 @@ mod tests {
         )
         .unwrap();
 
-        let swap_plaintext = SwapPlaintext {
+        let swap_plaintext = SwapPlaintext::new(
+            &mut OsRng,
             trading_pair,
-            delta_1_i: 100000u64.into(),
-            delta_2_i: 1u64.into(),
-            claim_fee: Fee(Value {
+            100000u64.into(),
+            1u64.into(),
+            Fee(Value {
                 amount: 3u64.into(),
                 asset_id: asset::REGISTRY.parse_denom("upenumbra").unwrap().id(),
             }),
-            claim_address: addr,
-        };
+            addr,
+        );
 
         let plan = TransactionPlan {
             expiry_height: 0,

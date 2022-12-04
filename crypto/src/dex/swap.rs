@@ -10,14 +10,16 @@ pub use plaintext::SwapPlaintext;
 
 use once_cell::sync::Lazy;
 
-use penumbra_proto::{core::dex::v1alpha1 as pb, Protobuf};
+use penumbra_proto::{
+    client::v1alpha1::BatchSwapOutputDataResponse, core::dex::v1alpha1 as pb, Protobuf,
+};
 
 use super::TradingPair;
 
 // Swap ciphertext byte length
-pub const SWAP_CIPHERTEXT_BYTES: usize = 216;
+pub const SWAP_CIPHERTEXT_BYTES: usize = 248;
 // Swap plaintext byte length
-pub const SWAP_LEN_BYTES: usize = 200;
+pub const SWAP_LEN_BYTES: usize = 232;
 
 pub static DOMAIN_SEPARATOR: Lazy<Fq> =
     Lazy::new(|| Fq::from_le_bytes_mod_order(blake2b_simd::blake2b(b"penumbra.swap").as_bytes()));
@@ -93,6 +95,14 @@ impl From<BatchSwapOutputData> for pb::BatchSwapOutputData {
     }
 }
 
+impl From<BatchSwapOutputData> for BatchSwapOutputDataResponse {
+    fn from(s: BatchSwapOutputData) -> Self {
+        BatchSwapOutputDataResponse {
+            data: Some(s.into()),
+        }
+    }
+}
+
 impl TryFrom<pb::BatchSwapOutputData> for BatchSwapOutputData {
     type Error = anyhow::Error;
     fn try_from(s: pb::BatchSwapOutputData) -> Result<Self, Self::Error> {
@@ -108,5 +118,15 @@ impl TryFrom<pb::BatchSwapOutputData> for BatchSwapOutputData {
                 .ok_or_else(|| anyhow!("Missing trading_pair"))?
                 .try_into()?,
         })
+    }
+}
+
+impl TryFrom<BatchSwapOutputDataResponse> for BatchSwapOutputData {
+    type Error = anyhow::Error;
+    fn try_from(value: BatchSwapOutputDataResponse) -> Result<Self, Self::Error> {
+        value
+            .data
+            .ok_or_else(|| anyhow::anyhow!("empty BatchSwapOutputDataResponse message"))?
+            .try_into()
     }
 }

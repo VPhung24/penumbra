@@ -11,7 +11,6 @@ use penumbra_crypto::{asset, note, IdentityKey, NotePayload, Nullifier, Value};
 use penumbra_proto::{StateReadProto, StateWriteProto};
 use penumbra_storage::{StateRead, StateTransaction, StateWrite};
 use penumbra_tct as tct;
-use penumbra_transaction::{Action, Transaction};
 use tct::Tree;
 use tendermint::abci;
 use tracing::instrument;
@@ -165,6 +164,11 @@ pub trait StateReadExt: StateRead {
         }
 
         Ok(())
+    }
+
+    /// Returns the NCT anchor for the given height.
+    async fn anchor_by_height(&self, height: u64) -> Result<Option<tct::Root>> {
+        self.get(&state_key::anchor_by_height(height)).await
     }
 
     /// Checks whether a claimed NCT anchor is a previous valid state root.

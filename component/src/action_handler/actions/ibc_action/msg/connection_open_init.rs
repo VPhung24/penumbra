@@ -15,14 +15,14 @@ use crate::ibc::component::connection::stateless::connection_open_init::version_
 #[async_trait]
 impl ActionHandler for MsgConnectionOpenInit {
     #[instrument(name = "connection_open_init", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         version_is_supported(self)?;
 
         Ok(())
     }
 
-    #[instrument(name = "connection_open_init", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "connection_open_init", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         state.validate(self).await?;
 
         Ok(())

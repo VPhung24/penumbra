@@ -17,7 +17,7 @@ use crate::ibc::component::connection::stateless::connection_open_ack::{
 #[async_trait]
 impl ActionHandler for MsgConnectionOpenAck {
     #[instrument(name = "connection_open_ack", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         has_client_state(self)?;
         has_client_proof(self)?;
         has_consensus_proof(self)?;
@@ -25,8 +25,8 @@ impl ActionHandler for MsgConnectionOpenAck {
         Ok(())
     }
 
-    #[instrument(name = "connection_open_ack", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "connection_open_ack", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         state.validate(self).await?;
 
         Ok(())

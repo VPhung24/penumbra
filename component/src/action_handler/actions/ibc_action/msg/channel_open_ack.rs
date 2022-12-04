@@ -17,17 +17,17 @@ use crate::ibc::transfer::Ics20Transfer;
 #[async_trait]
 impl ActionHandler for MsgChannelOpenAck {
     #[instrument(name = "channel_open_ack", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         // NOTE: no additional stateless validation is possible
 
         Ok(())
     }
 
-    #[instrument(name = "channel_open_ack", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "channel_open_ack", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         state.validate(self).await?;
         let transfer = PortId::transfer();
-        if self.port_id == transfer {
+        if self.port_id_on_a == transfer {
             Ics20Transfer::chan_open_ack_check(state, self).await?;
         } else {
             return Err(anyhow::anyhow!("invalid port id"));
@@ -40,7 +40,7 @@ impl ActionHandler for MsgChannelOpenAck {
     async fn execute(&self, state: &mut StateTransaction) -> Result<()> {
         state.execute(self).await;
         let transfer = PortId::transfer();
-        if self.port_id == transfer {
+        if self.port_id_on_a == transfer {
             Ics20Transfer::chan_open_ack_execute(state, self).await;
         } else {
             return Err(anyhow::anyhow!("invalid port id"));

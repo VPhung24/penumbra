@@ -12,12 +12,12 @@ use crate::governance::{check, execute};
 #[async_trait]
 impl ActionHandler for ProposalSubmit {
     #[instrument(name = "proposal_submit", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         check::stateless::proposal_submit(self)
     }
 
-    #[instrument(name = "proposal_submit", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "proposal_submit", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         check::stateful::proposal_submit(&state, self).await
     }
 

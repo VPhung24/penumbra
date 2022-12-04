@@ -14,7 +14,7 @@ use crate::{
 #[async_trait]
 impl ActionHandler for SwapClaim {
     #[instrument(name = "swap_claim", skip(self))]
-    fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, context: Arc<Transaction>) -> Result<()> {
         let swap_claim = self;
 
         let fee = swap_claim.body.fee.clone();
@@ -41,8 +41,8 @@ impl ActionHandler for SwapClaim {
         Ok(())
     }
 
-    #[instrument(name = "swap_claim", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "swap_claim", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         let swap_claim = self;
 
         // 1. Validate the epoch duration passed in the swap claim matches

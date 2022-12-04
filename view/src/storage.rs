@@ -9,7 +9,7 @@ use penumbra_crypto::{
 };
 use penumbra_proto::{
     client::v1alpha1::{
-        oblivious_query_service_client::ObliviousQueryServiceClient, ChainParamsRequest,
+        oblivious_query_service_client::ObliviousQueryServiceClient, ChainParametersRequest,
     },
     Protobuf,
 };
@@ -59,12 +59,13 @@ impl Storage {
                 ObliviousQueryServiceClient::connect(format!("http://{}:{}", node, pd_port))
                     .await?;
             let params = client
-                .chain_parameters(tonic::Request::new(ChainParamsRequest {
+                .chain_parameters(tonic::Request::new(ChainParametersRequest {
                     chain_id: String::new(),
                 }))
                 .await?
                 .into_inner()
                 .try_into()?;
+
             Self::initialize(storage_path, fvk.clone(), params).await
         }
     }
@@ -116,7 +117,7 @@ impl Storage {
         if storage_path.exists() {
             return Err(anyhow!("Database already exists at: {}", storage_path));
         } else {
-            std::fs::File::create(&storage_path)?;
+            std::fs::File::create(storage_path)?;
         }
         // Create the SQLite database
         sqlx::Sqlite::create_database(storage_path.as_str());
@@ -551,13 +552,13 @@ impl Storage {
         // crypto.AssetId asset_id = 3;
 
         let asset_clause = asset_id
-            .map(|id| format!("x'{}'", hex::encode(&id.to_bytes())))
+            .map(|id| format!("x'{}'", hex::encode(id.to_bytes())))
             .unwrap_or_else(|| "asset_id".to_string());
 
         // If set, only return notes with the specified address index.
         // crypto.AddressIndex address_index = 4;
         let address_clause = address_index
-            .map(|d| format!("x'{}'", hex::encode(&d.to_bytes())))
+            .map(|d| format!("x'{}'", hex::encode(d.to_bytes())))
             .unwrap_or_else(|| "address_index".to_string());
 
         let result = sqlx::query_as::<_, SpendableNoteRecord>(

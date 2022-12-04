@@ -80,14 +80,14 @@ enum TestnetCommand {
     /// configuration.
     Generate {
         /// Number of blocks per epoch.
-        #[clap(long, default_value = "719")]
-        epoch_duration: u64,
+        #[clap(long)]
+        epoch_duration: Option<u64>,
         /// Number of epochs before unbonding stake is released.
-        #[clap(long, default_value = "2")]
-        unbonding_epochs: u64,
+        #[clap(long)]
+        unbonding_epochs: Option<u64>,
         /// Maximum number of validators in the consensus set.
-        #[clap(long, default_value = "32")]
-        active_validator_limit: u64,
+        #[clap(long)]
+        active_validator_limit: Option<u64>,
         /// Whether to preserve the chain ID (useful for public testnets) or append a random suffix (useful for dev/testing).
         #[clap(long)]
         preserve_chain_id: bool,
@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
             Stack::new(recorder)
                 // Adding the `TracingContextLayer` will add labels from the tracing span to metrics.
                 // The only labels to be included are "chain_id" and "role".
-                .push(TracingContextLayer::only_allow(&["chain_id", "role"]))
+                .push(TracingContextLayer::only_allow(["chain_id", "role"]))
                 .install()
                 .expect("global recorder already installed");
 
@@ -318,12 +318,47 @@ async fn main() -> anyhow::Result<()> {
             let node_id = serde_json::value::from_value(node_id)?;
             tracing::info!(?node_id, "fetched node id");
 
+            // Crawl the node's
+            let net_info_peers = client
+                .get(format!("http://{}:26657/net_info", node))
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await?
+                .get("result")
+                .and_then(|v| v.get("peers"))
+                .and_then(|v| v.as_array())
+                .map(|v| v.clone())
+                .unwrap_or_default();
+
+            let mut peers = Vec::new();
+            peers.push((node_id, node));
+            tracing::info!(?peers);
+
+            for raw_peer in net_info_peers {
+                let node_id: Option<tendermint::node::Id> = raw_peer
+                    .get("node_info")
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| serde_json::value::from_value(v.clone()).ok());
+                let remote_ip = raw_peer
+                    .get("remote_ip")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                match (node_id, remote_ip) {
+                    (Some(node_id), Some(remote_ip)) => {
+                        peers.push((node_id, remote_ip));
+                    }
+                    _ => continue,
+                }
+            }
+            tracing::info!(?peers);
+
             let node_name = if let Some(moniker) = moniker {
                 moniker
             } else {
                 format!("node-{}", hex::encode(OsRng.gen::<u32>().to_le_bytes()))
             };
-            let tm_config = generate_tm_config(&node_name, &[(node_id, node)]);
+            let tm_config = generate_tm_config(&node_name, peers.as_ref());
 
             write_configs(node_dir, &vk, &genesis, tm_config)?;
         }
@@ -362,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
                     let randomizer = OsRng.gen::<u32>();
                     let chain_id =
                         chain_id.unwrap_or_else(|| env!("PD_LATEST_TESTNET_NAME").to_string());
-                    format!("{}-{}", chain_id, hex::encode(&randomizer.to_le_bytes()))
+                    format!("{}-{}", chain_id, hex::encode(randomizer.to_le_bytes()))
                 }
             };
 
@@ -516,6 +551,12 @@ async fn main() -> anyhow::Result<()> {
                     })
                 })
                 .collect::<Result<Vec<Validator>, anyhow::Error>>()?;
+
+            let default_params = ChainParameters::default();
+            let active_validator_limit =
+                active_validator_limit.unwrap_or(default_params.active_validator_limit);
+            let epoch_duration = epoch_duration.unwrap_or(default_params.epoch_duration);
+            let unbonding_epochs = unbonding_epochs.unwrap_or(default_params.unbonding_epochs);
 
             let app_state = genesis::AppState {
                 allocations: allocations.clone(),

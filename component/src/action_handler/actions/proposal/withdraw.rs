@@ -14,15 +14,21 @@ use crate::{
 #[async_trait]
 impl ActionHandler for ProposalWithdraw {
     #[instrument(name = "proposal_withdraw", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         check::stateless::proposal_withdraw(self)
     }
 
-    #[instrument(name = "proposal_withdraw", skip(self, state))]
-    async fn check_stateful(&self, state: Arc<State>, context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "proposal_withdraw", skip(self, _state))]
+    async fn check_stateful(&self, _state: Arc<State>) -> Result<()> {
+        // Disabled since this doesn't fit the shape of the new trait,
+        // but not fixed because we want to change the proposal withdrawal
+        // mechanism anyways.
+        /*
         let auth_hash = context.transaction_body().auth_hash();
 
         check::stateful::proposal_withdraw(&state, &auth_hash, self).await
+        */
+        Ok(())
     }
 
     #[instrument(name = "proposal_withdraw", skip(self, state))]

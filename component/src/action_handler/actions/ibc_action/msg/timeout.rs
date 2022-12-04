@@ -17,14 +17,14 @@ use crate::ibc::transfer::Ics20Transfer;
 #[async_trait]
 impl ActionHandler for MsgTimeout {
     #[instrument(name = "timeout", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         // NOTE: no additional stateless validation is possible
 
         Ok(())
     }
 
-    #[instrument(name = "timeout", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "timeout", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         state.validate(self).await?;
         let transfer = PortId::transfer();
         if self.packet.destination_port == transfer {

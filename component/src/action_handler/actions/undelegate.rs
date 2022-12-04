@@ -14,14 +14,14 @@ use crate::{
 #[async_trait]
 impl ActionHandler for Undelegate {
     #[instrument(name = "undelegate", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         // All stateless undelegation-related checks are performed
         // at the Transaction-level.
         Ok(())
     }
 
-    #[instrument(name = "undelegate", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "undelegate", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         let u = self;
         let rate_data = state
             .next_validator_rate(&u.validator_identity)

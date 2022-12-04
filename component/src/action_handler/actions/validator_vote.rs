@@ -14,12 +14,12 @@ use crate::{
 #[async_trait]
 impl ActionHandler for ValidatorVote {
     #[instrument(name = "validator_vote", skip(self, _context))]
-    fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
+    async fn check_stateless(&self, _context: Arc<Transaction>) -> Result<()> {
         check::stateless::validator_vote(self)
     }
 
-    #[instrument(name = "validator_vote", skip(self, state, _context))]
-    async fn check_stateful(&self, state: Arc<State>, _context: Arc<Transaction>) -> Result<()> {
+    #[instrument(name = "validator_vote", skip(self, state))]
+    async fn check_stateful(&self, state: Arc<State>) -> Result<()> {
         check::stateful::validator_vote(&state, self).await
     }
 

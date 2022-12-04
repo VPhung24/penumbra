@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use penumbra_chain::params::FmdParameters;
 use penumbra_chain::{genesis, AppHash, StateWriteExt as _};
-use penumbra_proto::StateWriteProto;
-use penumbra_storage::{State, StateTransaction, Storage};
+use penumbra_proto::{Protobuf, StateWriteProto};
+use penumbra_storage::{ArcStateExt, State, Storage};
 use penumbra_transaction::Transaction;
 use tendermint::abci::{self, types::ValidatorUpdate};
 use tracing::instrument;
@@ -71,9 +71,10 @@ impl App {
         &mut self,
         begin_block: &abci::request::BeginBlock,
     ) -> Vec<abci::Event> {
-        let state =
-            Arc::get_mut(&mut self.state).expect("state Arc should not be referenced elsewhere");
-        let mut state_tx = state.begin_transaction();
+        let mut state_tx = self
+            .state
+            .try_begin_transaction()
+            .expect("state Arc should not be referenced elsewhere");
 
         // store the block height
         state_tx.put_block_height(begin_block.header.height.into());
@@ -90,19 +91,27 @@ impl App {
         state_tx.apply()
     }
 
+    /// Wrapper function for [`Self::deliver_tx`]  that decodes from bytes.
+    pub async fn deliver_tx_bytes(&mut self, tx_bytes: &[u8]) -> Result<Vec<abci::Event>> {
+        let tx = Arc::new(Transaction::decode(tx_bytes)?);
+        self.deliver_tx(tx).await
+    }
+
     #[instrument(skip(self, tx))]
     pub async fn deliver_tx(&mut self, tx: Arc<Transaction>) -> Result<Vec<abci::Event>> {
-        Self::check_tx_stateless(tx.clone())?;
-        Self::check_tx_stateful(self.state.clone(), tx.clone()).await?;
+        // Both stateful and stateless checks take the transaction as
+        // verification context.  The separate clone of the Arc<Transaction>
+        // means it can be passed through the whole tree of checks.
+        tx.check_stateless(tx.clone()).await?;
+        tx.check_stateful(self.state.clone()).await?;
 
-        // We need to get a mutable reference to the State here, so we use
-        // `Arc::get_mut`. At this point, the stateful checks should have completed,
+        // At this point, the stateful checks should have completed,
         // leaving us with exclusive access to the Arc<State>.
-        let state =
-            Arc::get_mut(&mut self.state).expect("state Arc should not be referenced elsewhere");
-        let mut state_tx = state.begin_transaction();
-
-        Self::execute_tx(&mut state_tx, tx).await?;
+        let mut state_tx = self
+            .state
+            .try_begin_transaction()
+            .expect("state Arc should not be referenced elsewhere");
+        tx.execute(&mut state_tx).await?;
 
         // At this point, we've completed execution successfully with no errors,
         // so we can apply the transaction to the State. Otherwise, we'd have
@@ -112,9 +121,10 @@ impl App {
 
     #[instrument(skip(self, end_block))]
     pub async fn end_block(&mut self, end_block: &abci::request::EndBlock) -> Vec<abci::Event> {
-        let state =
-            Arc::get_mut(&mut self.state).expect("state Arc should not be referenced elsewhere");
-        let mut state_tx = state.begin_transaction();
+        let mut state_tx = self
+            .state
+            .try_begin_transaction()
+            .expect("state Arc should not be referenced elsewhere");
 
         Staking::end_block(&mut state_tx, end_block).await;
         IBCComponent::end_block(&mut state_tx, end_block).await;
@@ -131,17 +141,18 @@ impl App {
     ///
     /// This method also resets `self` as if it were constructed
     /// as an empty state over top of the newly written storage.
-    ///
-    /// TODO: why does this return Result?
     #[instrument(skip(self, storage))]
-    pub async fn commit(&mut self, storage: Storage) -> Result<AppHash> {
+    pub async fn commit(&mut self, storage: Storage) -> AppHash {
         // We need to extract the State we've built up to commit it.  Fill in a dummy state.
         let dummy_state = storage.latest_state();
         let state = Arc::try_unwrap(std::mem::replace(&mut self.state, Arc::new(dummy_state)))
             .expect("we have exclusive ownership of the State at commit()");
 
         // Commit the pending writes, clearing the state.
-        let jmt_root = storage.commit(state).await?;
+        let jmt_root = storage
+            .commit(state)
+            .await
+            .expect("must be able to successfully commit to storage");
         let app_hash: AppHash = jmt_root.into();
 
         tracing::debug!(?app_hash, "finished committing state");
@@ -149,7 +160,7 @@ impl App {
         // Get the latest version of the state, now that we've committed it.
         self.state = Arc::new(storage.latest_state());
 
-        Ok(app_hash)
+        app_hash
     }
 
     // TODO: should this just be returned by `commit`? both are called during every `EndBlock`
@@ -157,20 +168,5 @@ impl App {
         self.state
             .tendermint_validator_updates()
             .expect("tendermint validator updates should be set when called in end_block")
-    }
-
-    #[instrument(skip(tx))]
-    pub fn check_tx_stateless(tx: Arc<Transaction>) -> Result<()> {
-        tx.check_stateless(tx.clone())
-    }
-
-    #[instrument(skip(state, tx))]
-    async fn check_tx_stateful(state: Arc<State>, tx: Arc<Transaction>) -> Result<()> {
-        tx.check_stateful(state.clone(), tx.clone()).await
-    }
-
-    #[instrument(skip(state, tx))]
-    async fn execute_tx(state: &mut StateTransaction<'_>, tx: Arc<Transaction>) -> Result<()> {
-        tx.execute(state).await
     }
 }

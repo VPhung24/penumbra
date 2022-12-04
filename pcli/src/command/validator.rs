@@ -100,7 +100,7 @@ impl ValidatorCmd {
                 // We could also support defining multiple validators in a single
                 // file.
                 let definition_file =
-                    File::open(&file).with_context(|| format!("cannot open file {:?}", file))?;
+                    File::open(file).with_context(|| format!("cannot open file {:?}", file))?;
                 let new_validator: Validator = serde_json::from_reader(definition_file)
                     .map_err(|_| anyhow::anyhow!("Unable to parse validator definition"))?;
                 let fee = Fee::from_staking_token_amount((*fee as u64).into());
@@ -108,7 +108,7 @@ impl ValidatorCmd {
                 // Sign the validator definition with the wallet's spend key.
                 let protobuf_serialized: ProtoValidator = new_validator.clone().into();
                 let v_bytes = protobuf_serialized.encode_to_vec();
-                let auth_sig = sk.spend_auth_key().sign(&mut OsRng, &v_bytes);
+                let auth_sig = sk.spend_auth_key().sign(OsRng, &v_bytes);
                 let vd = validator::Definition {
                     validator: new_validator,
                     auth_sig,
@@ -153,7 +153,7 @@ impl ValidatorCmd {
 
                 // Generate an authorizing signature with the governance key for the vote body
                 let body_bytes = body.encode_to_vec();
-                let auth_sig = governance_auth_key.sign(&mut OsRng, &body_bytes);
+                let auth_sig = governance_auth_key.sign(OsRng, &body_bytes);
 
                 let vote = ValidatorVote { body, auth_sig };
 
@@ -181,9 +181,20 @@ impl ValidatorCmd {
                 let governance_key = GovernanceKey(identity_key.0);
                 // Generate a random consensus key.
                 // TODO: not great because the private key is discarded here and this isn't obvious to the user
-                let consensus_key =
-                    tendermint::PrivateKey::Ed25519(ed25519_consensus::SigningKey::new(OsRng))
-                        .public_key();
+                let consensus_key = ed25519_consensus::SigningKey::new(OsRng);
+
+                /* MAKESHIFT RAFT ZONE */
+                let signing_key_bytes = consensus_key.as_bytes().as_slice();
+                let verification_key_bytes = consensus_key.verification_key();
+                let verification_key_bytes = verification_key_bytes.as_bytes().as_slice();
+                // TODO(erwan): surely there's a better way to do this?
+                let keypair = [signing_key_bytes, verification_key_bytes].concat();
+                let keypair = keypair.as_slice();
+
+                let consensus_key = ed25519_dalek::Keypair::from_bytes(keypair.as_ref()).unwrap();
+                /* END */
+
+                let consensus_key = tendermint::PrivateKey::Ed25519(consensus_key).public_key();
 
                 let template = Validator {
                     identity_key,
