@@ -814,7 +814,7 @@ dependencies = [
  "quote 1.0.21",
  "serde",
  "serde_json",
- "syn 1.0.103",
+ "syn 1.0.105",
  "tempfile",
  "toml",
 ]
